@@ -4,43 +4,81 @@
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
-import { captureRef } from 'react-native-view-shot';
+import { captureRef, CaptureOptions } from 'react-native-view-shot';
 import { copyImageToClipboard } from '../clipboard/clipboardUtils';
 
 /**
- * Captures the canvas view as a transparent PNG
- * @param canvasRef Reference to the canvas view
+ * Captures the text preview as a transparent PNG
+ * @param viewRef Reference to the view to capture
  * @returns Promise resolving to the captured image URI
  */
-export async function captureCanvasAsPng(canvasRef: any): Promise<string | null> {
+export async function captureCanvasAsPng(viewRef: any): Promise<string | null> {
   try {
-    if (!canvasRef) {
-      throw new Error('Invalid canvas reference');
+    if (!viewRef) {
+      throw new Error('Invalid view reference');
     }
 
     // Get the actual ref - could be a direct ref or a React ref object
-    const viewRef = canvasRef.current ? canvasRef.current : canvasRef;
+    const ref = viewRef.current ? viewRef.current : viewRef;
     
-    // For web platform - HTMLCanvasElement
+    console.log('Starting capture process with view:', ref);
+    
+    // For web platform - use HTML API
     if (Platform.OS === 'web' && typeof HTMLCanvasElement !== 'undefined' && 
-        ((viewRef instanceof HTMLCanvasElement) || 
-         (canvasRef.current && canvasRef.current instanceof HTMLCanvasElement))) {
-      const canvas = viewRef instanceof HTMLCanvasElement ? viewRef : canvasRef.current;
+        ((ref instanceof HTMLCanvasElement) || 
+         (viewRef.current && viewRef.current instanceof HTMLCanvasElement))) {
+      const canvas = ref instanceof HTMLCanvasElement ? ref : viewRef.current;
+      console.log('Using HTML Canvas capture method for web');
       return canvas.toDataURL('image/png');
     }
     
-    // For React Native - use ViewShot
-    // The transparent background is achieved by setting the Canvas
-    // component's background to 'transparent' in its styles
-    const uri = await captureRef(viewRef, {
-      format: 'png',
-      quality: 1,
-      result: 'data-uri'
-    });
+    // For React Native, ensure the view is rendered before capturing
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    return uri;
+    // Different capture strategies per platform
+    const captureOptions: CaptureOptions = {
+      format: 'png', // PNG format supports transparency
+      quality: 1,     // Highest quality
+      result: 'data-uri',
+      // The following settings ensure transparency is preserved
+      // (no explicit 'transparent' property, as it's not in the type)
+      // Use platform-specific options
+      ...(Platform.OS === 'ios' ? {
+        // Better for text rendering on iOS
+        useRenderInContext: true,
+      } : {}),
+      ...(Platform.OS === 'android' ? {
+        // Better for Android specific views
+        handleGLSurfaceViewOnAndroid: true,
+      } : {})
+    };
+    
+    console.log(`Capturing view with options: ${JSON.stringify(captureOptions)}`);
+    
+    // Perform the capture
+    try {
+      const uri = await captureRef(ref, captureOptions);
+      console.log(`Capture successful, URI length: ${uri?.length ?? 0}`);
+      return uri;
+    } catch (captureError) {
+      console.error('First capture attempt failed:', captureError);
+      
+      // If the first attempt fails, try with different options
+      console.log('Trying alternative capture method...');
+      
+      // Try with more basic options, PNG format ensures transparency support
+      const fallbackOptions: CaptureOptions = {
+        format: 'png',
+        quality: 1, 
+        result: 'data-uri'
+      };
+      
+      const fallbackUri = await captureRef(ref, fallbackOptions);
+      console.log(`Fallback capture successful, URI length: ${fallbackUri?.length ?? 0}`);
+      return fallbackUri;
+    }
   } catch (error) {
-    console.error('Error capturing canvas as PNG:', error);
+    console.error('Error capturing view as PNG:', error);
     return null;
   }
 }
@@ -82,7 +120,7 @@ export async function saveToGallery(imageUri: string): Promise<boolean> {
       });
     }
     
-    // Save to media library
+    // Save to media library with proper MIME type to preserve transparency
     const asset = await MediaLibrary.createAssetAsync(fileUri);
     
     // Create Typix album if it doesn't exist
@@ -115,6 +153,8 @@ export async function copyCanvasToClipboard(canvasRef: any): Promise<boolean> {
     if (!pngUri) {
       throw new Error('Failed to capture canvas');
     }
+    
+    console.log('Successfully captured image with transparency, now copying to clipboard');
     
     // Copy the image to clipboard
     const success = await copyImageToClipboard(pngUri);

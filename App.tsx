@@ -1,15 +1,16 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, Modal, Alert, SafeAreaView, Dimensions, Platform, ToastAndroid } from 'react-native';
-import { CanvasProvider } from './src/contexts/CanvasContext';
-import { ToolProvider } from './src/contexts/ToolContext';
-import { SettingsProvider } from './src/contexts/SettingsContext';
-import Canvas from './src/components/Canvas';
+import { StyleSheet, View, Modal, Alert, SafeAreaView, Dimensions, Platform, ToastAndroid, KeyboardAvoidingView } from 'react-native';
+import { FontProvider } from './src/contexts/FontContext';
+import { TextProvider } from './src/contexts/TextContext';
+import { SettingsProvider, useSettings } from './src/contexts/SettingsContext';
+import TextInputPanel from './src/components/TextInputPanel';
+import FontSelectionPanel from './src/components/FontSelectionPanel';
+import TextPreviewArea from './src/components/TextPreviewArea';
 import ToolBar from './src/components/ToolBar';
 import ColorPicker from './src/components/ColorPicker';
-import BrushSizeSlider from './src/components/BrushSizeSlider';
-import { captureCanvasAsPng, saveToGallery, copyCanvasToClipboard } from './src/modules/image/galleryUtils';
-import { useSettings } from './src/contexts/SettingsContext';
+import { captureCanvasAsPng, copyCanvasToClipboard } from './src/modules/image/galleryUtils';
+import { useText } from './src/contexts/TextContext';
 
 // Get screen dimensions - memoized to prevent unnecessary re-calculations
 const windowDimensions = Dimensions.get('window');
@@ -19,79 +20,55 @@ export default function App() {
   // Wrap the app content with providers
   return (
     <SettingsProvider>
-      <ToolProvider>
-        <CanvasProvider>
+      <FontProvider>
+        <TextProvider>
           <AppContent />
-        </CanvasProvider>
-      </ToolProvider>
+        </TextProvider>
+      </FontProvider>
     </SettingsProvider>
   );
 }
 
-// Helper function to show minimal feedback based on platform
-const showMinimalFeedback = (message: string) => {
+// Show minimal feedback to user about action completion
+function showMinimalFeedback(message: string) {
+  // Use platform-specific feedback mechanisms
   if (Platform.OS === 'android') {
     ToastAndroid.show(message, ToastAndroid.SHORT);
   } else if (Platform.OS === 'ios') {
-    // On iOS, we could use a toast library, but for simplicity
-    // we'll use a short-lived alert
-    Alert.alert('', message);
-    // Auto-dismiss is not available in the React Native Alert API
-    // We'll rely on the user to dismiss instead
+    // Use an alert for iOS
+    Alert.alert('', message, [{ text: 'OK' }], { cancelable: true });
   } else {
-    // For web, console log is sufficient
-    console.log(message);
+    // For web and other platforms, may have other feedback options
+    console.log(`Feedback: ${message}`);
   }
-};
+}
 
 // Main app content
 function AppContent() {
   const { settings } = useSettings();
+  const { state: textState } = useText();
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showSizePicker, setShowSizePicker] = useState(false);
-  const canvasRef = useRef(null);
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // Canvas dimensions (slightly smaller than screen) - memoized values
-  const canvasWidth = React.useMemo(() => width, [width]);
-  const canvasHeight = React.useMemo(() => height - 120, [height]); // Account for toolbar and status bar
-
-  // Handle save to gallery
-  const handleSavePress = useCallback(async () => {
-    if (isProcessing) {
-      return;
+  const previewRef = useRef(null);
+  
+  // Panel expansion state
+  const [expandedPanel, setExpandedPanel] = useState<string>('textInput');
+  
+  // Toggle panel expansion
+  const togglePanel = (panelName: string) => {
+    if (expandedPanel === panelName) {
+      setExpandedPanel('');
+    } else {
+      setExpandedPanel(panelName);
     }
+  };
 
-    setIsProcessing(true);
-
-    try {
-      // Verify that the reference exists and is valid
-      if (!canvasRef || !canvasRef.current) {
-        throw new Error('Canvas reference not available');
-      }
-      
-      // Capture canvas as PNG with transparency
-      const pngUri = await captureCanvasAsPng(canvasRef);
-      
-      if (!pngUri) {
-        throw new Error('Failed to capture canvas');
-      }
-      
-      // Save directly to gallery
-      const success = await saveToGallery(pngUri);
-      
-      if (success) {
-        showMinimalFeedback('Saved to gallery');
-      } else {
-        throw new Error('Failed to save to gallery');
-      }
-    } catch (error) {
-      console.error('Save error:', error);
-      showMinimalFeedback('Could not save image');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [canvasRef, isProcessing]);
+  // Preview dimensions (slightly smaller than screen)
+  const previewWidth = React.useMemo(() => width - 32, [width]);
+  const previewHeight = React.useMemo(() => {
+    // Calculate reasonable height for preview area
+    return 200; // Fixed height to avoid layout issues
+  }, []);
 
   // Handle copy to clipboard
   const handleCopyToClipboardPress = useCallback(async () => {
@@ -99,21 +76,33 @@ function AppContent() {
       return;
     }
 
+    // Check if there's actual content to copy
+    if (!textState.content) {
+      showMinimalFeedback('No text to copy');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
       // Verify that the reference exists and is valid
-      if (!canvasRef || !canvasRef.current) {
-        throw new Error('Canvas reference not available');
+      if (!previewRef || !previewRef.current) {
+        throw new Error('Preview reference not available');
       }
       
-      // Copy canvas to clipboard
-      const success = await copyCanvasToClipboard(canvasRef);
+      console.log('Starting transparent PNG capture...');
+      
+      // Add a small delay to ensure the view is fully rendered
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Copy to clipboard - note that we specifically capture the inner view for transparency
+      // The previewRef points to the capture container which has a transparent bg
+      const success = await copyCanvasToClipboard(previewRef);
       
       if (success) {
-        showMinimalFeedback('Copied to clipboard');
+        showMinimalFeedback('Copied transparent PNG to clipboard');
       } else {
-        throw new Error('Failed to copy to clipboard');
+        throw new Error('Failed to copy transparent image to clipboard');
       }
     } catch (error) {
       console.error('Clipboard error:', error);
@@ -121,27 +110,54 @@ function AppContent() {
     } finally {
       setIsProcessing(false);
     }
-  }, [canvasRef, isProcessing]);
+  }, [previewRef, isProcessing, textState.content]);
+
+  // Handle reset
+  const handleResetPress = useCallback(() => {
+    // Handlers in the tool bar will reset state
+    showMinimalFeedback('All settings reset');
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="auto" />
       
-      <View style={styles.canvasContainer}>
-        <Canvas 
-          width={canvasWidth} 
-          height={canvasHeight}
-          ref={canvasRef}
+      <KeyboardAvoidingView 
+        style={styles.keyboardAvoidingView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={styles.contentContainer}>
+          {/* Text Input Panel */}
+          <TextInputPanel
+            isExpanded={expandedPanel === 'textInput'}
+            onToggleExpand={() => togglePanel('textInput')}
+          />
+          
+          {/* Font Selection Panel */}
+          <FontSelectionPanel
+            isExpanded={expandedPanel === 'fontSelection'}
+            onToggleExpand={() => togglePanel('fontSelection')}
+          />
+          
+          {/* Text Preview Area - The transparent preview is inside this component */}
+          <View style={styles.previewContainer}>
+            <TextPreviewArea
+              ref={previewRef}
+              width={previewWidth}
+              height={previewHeight}
+            />
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+      
+      {/* Toolbar - fixed at bottom */}
+      <View style={styles.toolbarContainer}>
+        <ToolBar
+          onCopyToClipboardPress={handleCopyToClipboardPress}
+          onResetPress={handleResetPress}
+          isProcessing={isProcessing}
         />
       </View>
-      
-      <ToolBar
-        onColorPickerPress={() => setShowColorPicker(true)}
-        onSizePickerPress={() => setShowSizePicker(true)}
-        onSavePress={handleSavePress}
-        onCopyToClipboardPress={handleCopyToClipboardPress}
-        isProcessing={isProcessing}
-      />
       
       {/* Color Picker Modal */}
       <Modal
@@ -156,20 +172,6 @@ function AppContent() {
           </View>
         </View>
       </Modal>
-      
-      {/* Brush Size Picker Modal */}
-      <Modal
-        visible={showSizePicker}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowSizePicker(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <BrushSizeSlider onClose={() => setShowSizePicker(false)} />
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -177,13 +179,21 @@ function AppContent() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f5f5',
   },
-  canvasContainer: {
+  keyboardAvoidingView: {
     flex: 1,
-    justifyContent: 'center',
+  },
+  contentContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  previewContainer: {
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    justifyContent: 'center',
+  },
+  toolbarContainer: {
+    width: '100%',
   },
   modalContainer: {
     flex: 1,
@@ -192,8 +202,17 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingTop: 8,
+    paddingBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
 });
