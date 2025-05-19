@@ -25,7 +25,7 @@ A cross-platform drawing application built with React Native and Expo that allow
 
 1. Clone the repository:
    ```
-   git clone https://github.com/YOUR_USERNAME/typix.git
+   git clone https://github.com/DmytroVolodymyrson/typix.git
    cd typix/typix-app
    ```
 
